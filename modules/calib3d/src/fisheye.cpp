@@ -127,13 +127,21 @@ void cv::fisheye::projectPoints(InputArray objectPoints, OutputArray imagePoints
         Vec3d Xi = objectPoints.depth() == CV_32F ? (Vec3d)Xf[i] : Xd[i];
         Vec3d Y = aff*Xi;
 
-        Vec2d x(Y[0]/Y[2], Y[1]/Y[2]);
+        if(fabs(Y[2]) < 1e-8)
+            Y[2] = 1e-8;
+
+        Vec2d x(Y[0]/fabs(Y[2]), Y[1]/fabs(Y[2]));
 
         double r2 = x.dot(x);
         double r = std::sqrt(r2);
 
         // Angle of the incoming ray:
-        double theta = atan(r);
+        double theta;
+
+        if(Y[2] > 0)
+            theta = atan2(r, 1);
+        else
+            theta = atan2(1, r) + M_PI/2;
 
         double theta2 = theta*theta, theta3 = theta2*theta, theta4 = theta2*theta2, theta5 = theta4*theta,
                 theta6 = theta3*theta3, theta7 = theta6*theta, theta8 = theta4*theta4, theta9 = theta8*theta;
@@ -382,7 +390,9 @@ void cv::fisheye::undistortPoints( InputArray distorted, OutputArray undistorted
         // the current camera model is only valid up to 180 FOV
         // for larger FOV the loop below does not converge
         // clip values so we still get plausible results for super fisheye images > 180 grad
-        theta_d = min(max(-CV_PI/2., theta_d), CV_PI/2.);
+
+        // Actualy, theta_d is tan(theta_d), so comparison has no sence
+        //theta_d = min(max(-CV_PI/2., theta_d), CV_PI/2.);
 
         if (theta_d > 1e-8)
         {
