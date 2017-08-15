@@ -128,7 +128,13 @@ void cv::fisheye::projectPoints(InputArray objectPoints, OutputArray imagePoints
         Vec3d Y = aff*Xi;
 
         if(fabs(Y[2]) < 1e-8)
-            Y[2] = 1e-8;
+        {
+            if(Y[2] > 0)
+                Y[2] = 1e-8;
+            else
+                Y[2] = -1e-8;
+        }
+
 
         Vec2d x(Y[0]/fabs(Y[2]), Y[1]/fabs(Y[2]));
 
@@ -176,12 +182,12 @@ void cv::fisheye::projectPoints(InputArray objectPoints, OutputArray imagePoints
 
             //Vec2d x(Y[0]/Y[2], Y[1]/Y[2]);
             Vec3d dxdom[2];
-            dxdom[0] = (1.0/Y[2]) * dYdom[0] - x[0]/Y[2] * dYdom[2];
-            dxdom[1] = (1.0/Y[2]) * dYdom[1] - x[1]/Y[2] * dYdom[2];
+            dxdom[0] = (1.0/fabs(Y[2])) * dYdom[0] - x[0]/fabs(Y[2]) * dYdom[2];
+            dxdom[1] = (1.0/fabs(Y[2])) * dYdom[1] - x[1]/fabs(Y[2]) * dYdom[2];
 
             Vec3d dxdT[2];
-            dxdT[0]  = (1.0/Y[2]) * dYdT[0] - x[0]/Y[2] * dYdT[2];
-            dxdT[1]  = (1.0/Y[2]) * dYdT[1] - x[1]/Y[2] * dYdT[2];
+            dxdT[0]  = (1.0/fabs(Y[2])) * dYdT[0] - x[0]/fabs(Y[2]) * dYdT[2];
+            dxdT[1]  = (1.0/fabs(Y[2])) * dYdT[1] - x[1]/fabs(Y[2]) * dYdT[2];
 
             //double r2 = x.dot(x);
             Vec3d dr2dom = 2 * x[0] * dxdom[0] + 2 * x[1] * dxdom[1];
@@ -194,7 +200,12 @@ void cv::fisheye::projectPoints(InputArray objectPoints, OutputArray imagePoints
 
             // Angle of the incoming ray:
             //double theta = atan(r);
-            double dthetadr = 1.0/(1+r2);
+            double dthetadr;
+            if(Y[2] > 0)
+                dthetadr = 1/(1+r2);
+            else
+                dthetadr = -1/(1+r2);
+
             Vec3d dthetadom = dthetadr * drdom;
             Vec3d dthetadT  = dthetadr *  drdT;
 
