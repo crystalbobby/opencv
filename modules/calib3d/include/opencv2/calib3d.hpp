@@ -2035,6 +2035,22 @@ namespace fisheye
      */
     CV_EXPORTS_W void distortPoints(InputArray undistorted, OutputArray distorted, InputArray K, InputArray D, double alpha = 0);
 
+    /** @brief Distorts points with spherical coordinates (theta, phi) using fisheye model.
+
+    @param undistorted Array of object points of sphere in spherical coordinates (theta, phi), where theta = 0 for optical axis,
+    1xN/Nx1 2-channel (or vector\<Point2f\> ), where N is the number of points in the view.
+    @param K Camera matrix \f$K = \vecthreethree{f_x}{0}{c_x}{0}{f_y}{c_y}{0}{0}{_1}\f$.
+    @param D Input vector of distortion coefficients \f$(k_1, k_2, k_3, k_4)\f$.
+    @param alpha The skew coefficient.
+    @param distorted Output array of image points, 1xN/Nx1 2-channel, or vector\<Point2f\> .
+
+    Note that the function assumes the camera matrix of the undistorted points to be indentity.
+    This means if you want to transform back points undistorted with undistortPoints() you have to
+    multiply them with \f$P^{-1}\f$.
+     */
+
+    CV_EXPORTS_W void distortSpheric(InputArray undistorted, OutputArray distorted, InputArray K, InputArray D, double alpha);
+
     /** @brief Undistorts 2D points using fisheye model
 
     @param distorted Array of object points, 1xN/Nx1 2-channel (or vector\<Point2f\> ), where N is the
@@ -2048,6 +2064,38 @@ namespace fisheye
      */
     CV_EXPORTS_W void undistortPoints(InputArray distorted, OutputArray undistorted,
         InputArray K, InputArray D, InputArray R = noArray(), InputArray P  = noArray());
+
+    /** @brief Calculate max zenith undistorted angle such that undistort transform is correct, also calculate
+     * correspondent distorted tangens
+
+    @param K Camera matrix \f$K = \vecthreethree{f_x}{0}{c_x}{0}{f_y}{c_y}{0}{0}{_1}\f$.
+    @param D Input vector of distortion coefficients \f$(k_1, k_2, k_3, k_4)\f$.
+    @param maxTan
+    @return zenith anggle upper bound of distort transform domain
+     */
+    CV_EXPORTS_W double undistortDomain(InputArray D, double * maxTan = 0);
+
+    /** @brief Calculate max zenith undistorted angle of the set distorted points
+
+    @param distorted Array of object points, 1xN/Nx1 2-channel (or vector\<Point2f\> ), where N is the  number of points in the view.
+    @param K Camera matrix \f$K = \vecthreethree{f_x}{0}{c_x}{0}{f_y}{c_y}{0}{0}{_1}\f$.
+    @param D Input vector of distortion coefficients \f$(k_1, k_2, k_3, k_4)\f$.
+    @param maxTan
+    @param mask is 1d array: 1 for points, that could be undistorted, 0 for points that couldn't be undistorted
+    @return max zenith anggle of undistorted point set
+     */
+    CV_EXPORTS_W double undistortDomain(InputArray distorted, InputArray K, InputArray D, double * maxTan = 0, OutputArray mask = cv::noArray());
+
+    /** @brief Undistorts 2D points using fisheye model
+
+    @param distorted Array of object points, 1xN/Nx1 2-channel (or vector\<Point2f\> ), where N is the  number of points in the view.
+    @param K Camera matrix \f$K = \vecthreethree{f_x}{0}{c_x}{0}{f_y}{c_y}{0}{0}{_1}\f$.
+    @param D Input vector of distortion coefficients \f$(k_1, k_2, k_3, k_4)\f$.
+    @param domain is the maximal andistorted  zenith angle. Default value of -1 meands, that domain is tobe calculated
+    @param undistorted Output array of image points in spherical coordinates (theta,phi), where theta is zenith angle, phi is
+    azimutal angle
+     */
+    CV_EXPORTS_W void undistortSpheric( InputArray distorted, OutputArray undistorted, InputArray K, InputArray D, double domain = -1);
 
     /** @brief Computes undistortion and rectification maps for image transform by cv::remap(). If D is empty zero
     distortion is used, if R or P is empty identity matrixes are used.
