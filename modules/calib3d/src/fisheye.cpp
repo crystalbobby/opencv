@@ -715,7 +715,8 @@ void cv::fisheye::undistortSpheric( InputArray distorted, OutputArray undistorte
     double domain = upperLimit;
     double maxTan;
     if (upperLimit < 0)
-        domain = undistortDomain(distorted, K, D, &maxTan);
+        domain = undistortDomain(K, D, &maxTan);
+//        domain = undistortDomain(distorted, K, D, &maxTan);
 
     cv::Vec2d f, c;
     if (K.depth() == CV_32F)
@@ -759,6 +760,8 @@ void cv::fisheye::undistortSpheric( InputArray distorted, OutputArray undistorte
 
         if (phi > CV_PI) phi = CV_PI;
         if (phi < -CV_PI) phi = - CV_PI;
+
+        theta_d = std::max(theta_d, maxTan - std::numeric_limits<double>::epsilon());
 
         if (theta_d > 1e-8)
         {
