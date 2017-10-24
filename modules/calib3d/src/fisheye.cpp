@@ -57,6 +57,204 @@ namespace cv { namespace
     void subMatrix(const Mat& src, Mat& dst, const std::vector<uchar>& cols, const std::vector<uchar>& rows);
 }}
 
+namespace cv { namespace {
+
+double poly(double k[], unsigned n, double x)
+{
+
+    double ret = k[n];
+    for (unsigned i = 1; i <= n; i++) {
+        ret *= x;
+        ret += k[n - i];
+    }
+
+    return ret;
+}
+
+double nthPositiveRoot(InputArray L, unsigned n)
+{
+    if ( n < 1 )
+        return -1.0;
+
+    cv::Mat R;
+
+    try {
+        cv::solvePoly(L,R);
+    }
+    catch (...) {
+        return -1.0;
+    }
+
+    std::vector<double> roots;
+
+    for (int i = 0; i < L.cols(); i++) {
+        cv::Vec2d r = R.at<cv::Vec2d>(i);
+        if (std::fabs((long double)r[1]) < std::numeric_limits<double>::epsilon()
+                && (long double)r[0] > 0.0)
+            roots.push_back(r[0]);
+    }
+
+    if (!roots.size() < n)
+        return -1.0;
+
+    return roots[n-1];
+}
+
+std::vector<double> positiveRoots(InputArray L)
+{
+    if ( n < 1 )
+        return -1.0;
+
+    cv::Mat R;
+
+    try {
+        cv::solvePoly(L,R);
+    }
+    catch (...) {
+        return -1.0;
+    }
+
+    std::vector<double> roots;
+
+    for (int i = 0; i < L.cols(); i++) {
+        cv::Vec2d r = R.at<cv::Vec2d>(i);
+        if (std::fabs((long double)r[1]) < std::numeric_limits<double>::epsilon()
+                && (long double)r[0] > 0.0)
+            roots.push_back(r[0]);
+    }
+
+    return roots;
+}
+
+
+double cv::fisheye::contractionDomain(InputArray D, double * maxTan /*= 0*/)
+{
+    Vec4d k = D.depth() == CV_32F ? (Vec4d)*D.getMat().ptr<Vec4f>(): *D.getMat().ptr<Vec4d>();
+
+    double upper = cv::fisheye::undistortDomain(D);
+
+//    cv::Mat Denom = (cv::Mat_<double>(1,9) << 1, 0, k[0], 0, k[1], 0, k[2], 0, k[3]);
+    double denom[9] = { 1, 0, k[0], 0, k[1], 0, k[2], 0, k[3]};
+
+//    cv::Mat Nom1 = (cv::Mat_<double>(1,8) << 0, -k[0], 0, -2*k[1], 0, -3*k[2], 0, -4*k[3]);
+    double nom1[8] = { 0, -k[0], 0, -2*k[1], 0, -3*k[2], 0, -4*k[3]};
+    cv::Mat Nom2 = (cv::Mat_<double>(1,16) << 0,
+                    -k[0],
+            2*k[0]*k[0],
+            -k[0]*k[0]-2*k[1],
+            8*k[0]*k[1],
+            -3*k[0]*k[1]-3*k[2],
+            12*k[0]*k[2]+8*k[1]*k[1],
+            -4*k[0]*k[2]-2*k[1]*k[1]-4*k[3],
+            16*k[0]*k[3]+24*k[1]*k[2],
+            -5*k[0]*k[3]-5*k[1]*k[2],
+            32*k[0]*k[3]+9*k[2]*k[2],
+            -6*k[1]*k[3]-3*k[2]*k[2],
+            48*k[2]*k[3],
+            -7*k[2]*k[3],
+            32 * k[3]*k[3],
+            -4*k[3]*k[3]);
+
+    double nom2[16] = { 0,
+                        -k[0],
+                        2*k[0]*k[0],
+                        -k[0]*k[0]-2*k[1],
+                        8*k[0]*k[1],
+                        -3*k[0]*k[1]-3*k[2],
+                        12*k[0]*k[2]+8*k[1]*k[1],
+                        -4*k[0]*k[2]-2*k[1]*k[1]-4*k[3],
+                        16*k[0]*k[3]+24*k[1]*k[2],
+                        -5*k[0]*k[3]-5*k[1]*k[2],
+                        32*k[0]*k[3]+9*k[2]*k[2],
+                        -6*k[1]*k[3]-3*k[2]*k[2],
+                        48*k[2]*k[3],
+                        -7*k[2]*k[3],
+                        32 * k[3]*k[3],
+                        -4*k[3]*k[3]
+                      };
+
+    std::vector<double> d2positiveRoots = positiveRoots(Nom2);
+
+    if (!d2positiveRoots.size()) {
+        if (upper > 0) {
+            if (maxTan)
+                *maxTan = upper * poly(denom, 8, upper);
+            return upper;
+        }
+
+        if (maxTan)
+            *maxTan = std::numeric_limits<double>::infinity();
+
+        return std::numeric_limits<double>::infinity();
+    }
+
+    unsigned n = 0;
+    double ret = d2positiveRoots[n];
+
+    if (ret > upper && upper > 0) {
+        if (maxTan)
+            *maxTan = upper * poly(denom, 8, upper);
+        return upper;
+    }
+
+    double derivative = 0;
+
+    while (n < d2positiveRoots.size() ) {
+        double N = 2*ret*poly(nom1, 7, ret);
+        double D = poly(denom,8,ret);
+        D *= D;
+        derivative = std::fabs(D) > std::numeric_limits<double>::epsilon() ? N/D : std::numeric_limits<double>::infinity();
+
+        if ( std::fabs(derivative) > 1/4.0) {
+            if (n) {
+                ret = d2positiveRoots[n-1];
+                if (maxTan)
+                    *maxTan = ret * poly(denom, 8, ret);
+                return ret;
+            }
+            else {
+                if (maxTan)
+                    *maxTan = 0;
+                return 0;
+            }
+        }
+
+        if (upper > 0 && ret >= upper) {
+            if (maxTan)
+                *maxTan = ret * poly(denom, 8, ret);
+            return ret;
+        }
+
+        n++;
+        ret = d2positiveRoots[n];
+        if ( upper > 0 && ret > upper)
+            ret = upper;
+
+    }
+
+
+
+//    cv::Mat L1 = (cv::Mat_<double>(1,5) << 0, k[0], 0, 2*k[1], 0, 3*k[2], 0, 4*k[3]);
+//    double r1 = nthPositiveRoot(L1,1);
+//    double r2 = nthPositiveRoot(L1,2);
+
+//    double r12 = r1*r1, r13 = r12*r1, r14 = r12*r12,
+//            r16 = r13*r13, r18 = r14*r14, r15 = r14 * r1, r17 = r16*r1;
+
+//    double R1 = 1/(1 + k[0]*r12 + k[1]*r14 + k[2]*r16 + k[3]*r18);
+
+//    double r22 = r2*r2, r23 = r22*r2, r24 = r22*r22,
+//            r26 = r23*r23, r28 = r24*r24, r15 = r24 * r2, r17 = r26*r2;
+
+//    double R1 = 1/(1 + k[0]*r12 + k[1]*r14 + k[2]*r16 + k[3]*r18);
+
+
+    return ret;
+}
+
+}}
+
+
 using namespace cv;
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// cv::fisheye::projectPoints
@@ -499,37 +697,10 @@ double cv::fisheye::undistortDomain(InputArray D, double * maxTan /*= 0*/)
         return -1.0; // undistortPointsEx domain [ 0; +\infty )
 
     cv::Mat L = (cv::Mat_<double>(1,5) << 1.0, 3*k[0], 5*k[1], 7*k[2], 9*k[3]);
-    cv::Mat R;
+    double ret = nthPositiveRoot(L,1);
 
-    try {
-        cv::solvePoly(L,R);
-    }
-    catch (...) {
-        return -1.0;
-    }
-
-    std::vector<double> roots;
-
-    for (int i = 0; i < 4; i++) {
-        cv::Vec2d r = R.at<cv::Vec2d>(i);
-        if (std::fabs((long double)r[1]) < std::numeric_limits<double>::epsilon())
-            roots.push_back(r[0]);
-    }
-
-    if (!roots.size() )
-        return -1.0;
-
-    std::sort(roots.begin(), roots.end());
-
-    double ret = -1.0;
-    unsigned i = 0;
-
-    for (i = 0; i < roots.size(); i++) {
-        if (roots[i] > 0) {
-            ret = sqrt(roots[i]);
-            break;
-        }
-    }
+    if (ret < 0)
+        return ret;
 
     if (maxTan) {
         if (ret > 0) {
@@ -543,6 +714,8 @@ double cv::fisheye::undistortDomain(InputArray D, double * maxTan /*= 0*/)
     return ret;
 }
 
+
+
 struct Tan {
     double val;
     unsigned no;
@@ -555,17 +728,6 @@ struct Tan {
     bool operator< (const Tan& rhs) const { return val < rhs.val; }
 };
 
-static double inline poly(double k[], unsigned n, double x)
-{
-
-    double ret = k[n];
-    for (unsigned i = 1; i <= n; i++) {
-        ret *= x;
-        ret += k[n - i];
-    }
-
-    return ret;
-}
 
 static inline int bisectionMetod(double k[], unsigned n, double left, double right, double epsilon, double * solution)
 {
