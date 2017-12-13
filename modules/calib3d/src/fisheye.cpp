@@ -44,6 +44,8 @@
 #include "fisheye.hpp"
 #include <limits>
 
+#define MINIMALDERIVATIVE (0.25)
+
 namespace cv { namespace
 {
     struct JacobianRow
@@ -94,7 +96,7 @@ double nthPositiveRoot(InputArray L, unsigned n)
             roots.push_back(r[0]);
     }
 
-    if (!roots.size() < n)
+    if (roots.size() < n)
         return -1.0;
 
     return roots[n-1];
@@ -102,8 +104,10 @@ double nthPositiveRoot(InputArray L, unsigned n)
 
 std::vector<double> positiveRoots(InputArray L)
 {
+    std::vector<double> roots;
+    int n = L.cols();
     if ( n < 1 )
-        return -1.0;
+        return roots;
 
     cv::Mat R;
 
@@ -111,10 +115,9 @@ std::vector<double> positiveRoots(InputArray L)
         cv::solvePoly(L,R);
     }
     catch (...) {
-        return -1.0;
+        return roots;
     }
 
-    std::vector<double> roots;
 
     for (int i = 0; i < L.cols(); i++) {
         cv::Vec2d r = R.at<cv::Vec2d>(i);
@@ -127,16 +130,13 @@ std::vector<double> positiveRoots(InputArray L)
 }
 
 
-double cv::fisheye::contractionDomain(InputArray D, double * maxTan /*= 0*/)
+
+double contractionDomain(InputArray D, double * maxTan /*= 0*/)
 {
     Vec4d k = D.depth() == CV_32F ? (Vec4d)*D.getMat().ptr<Vec4f>(): *D.getMat().ptr<Vec4d>();
 
     double upper = cv::fisheye::undistortDomain(D);
-
-//    cv::Mat Denom = (cv::Mat_<double>(1,9) << 1, 0, k[0], 0, k[1], 0, k[2], 0, k[3]);
     double denom[9] = { 1, 0, k[0], 0, k[1], 0, k[2], 0, k[3]};
-
-//    cv::Mat Nom1 = (cv::Mat_<double>(1,8) << 0, -k[0], 0, -2*k[1], 0, -3*k[2], 0, -4*k[3]);
     double nom1[8] = { 0, -k[0], 0, -2*k[1], 0, -3*k[2], 0, -4*k[3]};
     cv::Mat Nom2 = (cv::Mat_<double>(1,16) << 0,
                     -k[0],
@@ -155,25 +155,10 @@ double cv::fisheye::contractionDomain(InputArray D, double * maxTan /*= 0*/)
             32 * k[3]*k[3],
             -4*k[3]*k[3]);
 
-    double nom2[16] = { 0,
-                        -k[0],
-                        2*k[0]*k[0],
-                        -k[0]*k[0]-2*k[1],
-                        8*k[0]*k[1],
-                        -3*k[0]*k[1]-3*k[2],
-                        12*k[0]*k[2]+8*k[1]*k[1],
-                        -4*k[0]*k[2]-2*k[1]*k[1]-4*k[3],
-                        16*k[0]*k[3]+24*k[1]*k[2],
-                        -5*k[0]*k[3]-5*k[1]*k[2],
-                        32*k[0]*k[3]+9*k[2]*k[2],
-                        -6*k[1]*k[3]-3*k[2]*k[2],
-                        48*k[2]*k[3],
-                        -7*k[2]*k[3],
-                        32 * k[3]*k[3],
-                        -4*k[3]*k[3]
-                      };
-
     std::vector<double> d2positiveRoots = positiveRoots(Nom2);
+    unsigned n = 0;
+    double derivative = 0, N, Dn;
+    double ret;
 
     if (!d2positiveRoots.size()) {
         if (upper > 0) {
@@ -181,49 +166,35 @@ double cv::fisheye::contractionDomain(InputArray D, double * maxTan /*= 0*/)
                 *maxTan = upper * poly(denom, 8, upper);
             return upper;
         }
-
-        if (maxTan)
-            *maxTan = std::numeric_limits<double>::infinity();
-
-        return std::numeric_limits<double>::infinity();
+        goto retvalues;
     }
 
-    unsigned n = 0;
-    double ret = d2positiveRoots[n];
+    ret = d2positiveRoots[n];
 
-    if (ret > upper && upper > 0) {
-        if (maxTan)
-            *maxTan = upper * poly(denom, 8, upper);
-        return upper;
+    if (upper > 0 && ret > upper ) {
+        ret = upper;
     }
 
-    double derivative = 0;
+    if (upper > 0 && d2positiveRoots[d2positiveRoots.size() - 1] < upper)
+        d2positiveRoots.push_back(upper);
+
 
     while (n < d2positiveRoots.size() ) {
-        double N = 2*ret*poly(nom1, 7, ret);
-        double D = poly(denom,8,ret);
-        D *= D;
-        derivative = std::fabs(D) > std::numeric_limits<double>::epsilon() ? N/D : std::numeric_limits<double>::infinity();
+        N = 2*ret*poly(nom1, 7, ret);
+        Dn = poly(denom,8,ret);
+        Dn *= Dn;
+        derivative = std::fabs(Dn) > std::numeric_limits<double>::epsilon() ? N/Dn : std::numeric_limits<double>::infinity();
 
-        if ( std::fabs(derivative) > 1/4.0) {
-            if (n) {
-                ret = d2positiveRoots[n-1];
-                if (maxTan)
-                    *maxTan = ret * poly(denom, 8, ret);
-                return ret;
-            }
-            else {
-                if (maxTan)
-                    *maxTan = 0;
-                return 0;
-            }
+        if ( std::fabs(derivative) > MINIMALDERIVATIVE ) {
+            if (ret < upper)
+                ret = n ? d2positiveRoots[n-1] : 0;
+            else
+                ret = 0;
+            goto retvalues;
         }
 
-        if (upper > 0 && ret >= upper) {
-            if (maxTan)
-                *maxTan = ret * poly(denom, 8, ret);
-            return ret;
-        }
+        if (upper > 0 && ret >= upper)
+            goto retvalues;
 
         n++;
         ret = d2positiveRoots[n];
@@ -232,28 +203,14 @@ double cv::fisheye::contractionDomain(InputArray D, double * maxTan /*= 0*/)
 
     }
 
-
-
-//    cv::Mat L1 = (cv::Mat_<double>(1,5) << 0, k[0], 0, 2*k[1], 0, 3*k[2], 0, 4*k[3]);
-//    double r1 = nthPositiveRoot(L1,1);
-//    double r2 = nthPositiveRoot(L1,2);
-
-//    double r12 = r1*r1, r13 = r12*r1, r14 = r12*r12,
-//            r16 = r13*r13, r18 = r14*r14, r15 = r14 * r1, r17 = r16*r1;
-
-//    double R1 = 1/(1 + k[0]*r12 + k[1]*r14 + k[2]*r16 + k[3]*r18);
-
-//    double r22 = r2*r2, r23 = r22*r2, r24 = r22*r22,
-//            r26 = r23*r23, r28 = r24*r24, r15 = r24 * r2, r17 = r26*r2;
-
-//    double R1 = 1/(1 + k[0]*r12 + k[1]*r14 + k[2]*r16 + k[3]*r18);
-
+retvalues:
+    if (maxTan && *maxTan != std::numeric_limits<double>::infinity())
+        *maxTan = ret * poly(denom, 8, ret);
 
     return ret;
 }
 
 }}
-
 
 using namespace cv;
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -687,8 +644,6 @@ void cv::fisheye::undistortPoints( InputArray distorted, OutputArray undistorted
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// cv::fisheye::undistortDomain
-
-static double inline poly(double k[], unsigned n, double x);
 
 double cv::fisheye::undistortDomain(InputArray D, double * maxTan /*= 0*/)
 {
