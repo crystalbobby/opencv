@@ -2065,13 +2065,12 @@ namespace fisheye
     CV_EXPORTS_W void undistortPoints(InputArray distorted, OutputArray undistorted,
         InputArray K, InputArray D, InputArray R = noArray(), InputArray P  = noArray());
 
-    /** @brief Calculate max zenith undistorted angle such that undistort transform is correct, also calculate
+    /** @brief Calculate max zenith undistorted angle such that distort transform is correct, also calculate
      * correspondent distorted tangens
 
-    @param K Camera matrix \f$K = \vecthreethree{f_x}{0}{c_x}{0}{f_y}{c_y}{0}{0}{_1}\f$.
     @param D Input vector of distortion coefficients \f$(k_1, k_2, k_3, k_4)\f$.
     @param maxTan
-    @return zenith anggle upper bound of distort transform domain
+    @return zenith angle upper bound of distort transform domain
      */
     CV_EXPORTS_W double undistortDomain(InputArray D, double * maxTan = 0);
 

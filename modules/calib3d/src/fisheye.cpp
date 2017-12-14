@@ -43,6 +43,7 @@
 #include "precomp.hpp"
 #include "fisheye.hpp"
 #include <limits>
+#include <iostream>
 
 #define MINIMALDERIVATIVE (0.25)
 
@@ -84,20 +85,37 @@ double nthPositiveRoot(InputArray L, unsigned n)
         cv::solvePoly(L,R);
     }
     catch (...) {
-        return -1.0;
+        return -2.0;
     }
 
     std::vector<double> roots;
 
-    for (int i = 0; i < L.cols(); i++) {
+    std::cout << __FUNCTION__ <<": roots : " << R << std::endl;
+
+    for (int i = 0; i < R.rows; i++) {
         cv::Vec2d r = R.at<cv::Vec2d>(i);
+//        std::cout << r <<std::endl;
         if (std::fabs((long double)r[1]) < std::numeric_limits<double>::epsilon()
-                && (long double)r[0] > 0.0)
+                && (long double)r[0] > 0.0) {
             roots.push_back(r[0]);
+            std::cout << "emplace back: " << r[0] << std::endl;
+        }
+        else
+            std::cout << __FUNCTION__ << "std::numeric_limits<double>::epsilon()="<<
+                      std::numeric_limits<double>::epsilon()<< std::endl;
+
     }
 
+    if (roots.size())
+        std::sort(roots.begin(),roots.end());
+    std::cout << __FUNCTION__ <<": roots : ";
+    for (unsigned m = 0; m < roots.size(); m++) {
+        std::cout << roots[m] << "; ";
+    }
+    std::cout << std::endl;
+
     if (roots.size() < n)
-        return -1.0;
+        return std::numeric_limits<double>::infinity();
 
     return roots[n-1];
 }
@@ -119,12 +137,15 @@ std::vector<double> positiveRoots(InputArray L)
     }
 
 
-    for (int i = 0; i < L.cols(); i++) {
+    for (int i = 0; i < R.cols; i++) {
         cv::Vec2d r = R.at<cv::Vec2d>(i);
         if (std::fabs((long double)r[1]) < std::numeric_limits<double>::epsilon()
                 && (long double)r[0] > 0.0)
             roots.push_back(r[0]);
     }
+
+    if (roots.size())
+        std::sort(roots.begin(),roots.end());
 
     return roots;
 }
@@ -648,22 +669,51 @@ void cv::fisheye::undistortPoints( InputArray distorted, OutputArray undistorted
 double cv::fisheye::undistortDomain(InputArray D, double * maxTan /*= 0*/)
 {
     Vec4d k = D.depth() == CV_32F ? (Vec4d)*D.getMat().ptr<Vec4f>(): *D.getMat().ptr<Vec4d>();
-    if ( k[3] >= 0 && k[2] >= 0 && k[1] >= 0 && k[0] >= 0 )
-        return -1.0; // undistortPointsEx domain [ 0; +\infty )
-
-    cv::Mat L = (cv::Mat_<double>(1,5) << 1.0, 3*k[0], 5*k[1], 7*k[2], 9*k[3]);
-    double ret = nthPositiveRoot(L,1);
-
-    if (ret < 0)
-        return ret;
-
-    if (maxTan) {
-        if (ret > 0) {
+    std::cout << __FUNCTION__ <<": K = " << k << std::endl;
+    double ret = -1.0;
+    if ( k[3] >= 0 && k[2] >= 0 && k[1] >= 0 && k[0] >= 0 ) {
+        ret = CV_PI;//std::numeric_limits<double>::infinity()/2 + 1;
+        if (maxTan) {
             double p[10] = { 0.0, 1.0, 0.0, k[0], 0.0, k[1], 0.0, k[2], 0.0, k[3] };
             *maxTan = poly(p, 9, ret );
         }
-        else
+        std::cout << __FUNCTION__ <<": returns INFINITY #1" << std::endl;
+        return ret; // undistortPointsEx domain [ 0; +\infty )
+    }
+
+    cv::Mat L = (cv::Mat_<double>(1,9) << 1.0, 0.0, 3*k[0], 0.0, 5*k[1], 0.0, 7*k[2], 0.0, 9*k[3]);
+    ret = nthPositiveRoot(L,1);
+    std::cout << __FUNCTION__ << " : 1st positive root is " << ret << std::endl;
+
+    if (ret > 4*CV_PI) {
+        std::cout << __FUNCTION__ <<": returns INFINITY #2" << std::endl;
+        ret = CV_PI;
+    }
+
+    std::cout << __FUNCTION__ << " : 1st positive root is " << ret << std::endl;
+
+    if (ret < 0) {
+        std::cout << __FUNCTION__ <<": something went wrong #3" << std::endl;
+        return ret;
+    }
+
+    if (maxTan) {
+/*        if (ret > std::numeric_limits<double>::infinity()/2) {
+            *maxTan = std::numeric_limits<double>::infinity()/2 + 1;
+            std::cout << __FUNCTION__ <<": returns INFINITY #4" << std::endl;
+
+        }
+        else*/ if (ret > 0) {
+            double p[10] = { 0.0, 1.0, 0.0, k[0], 0.0, k[1], 0.0, k[2], 0.0, k[3] };
+            *maxTan = poly(p, 9, ret );
+            std::cout << __FUNCTION__ <<": normal data #5" << std::endl;
+
+        }
+        else {
             *maxTan = -1.0;
+            std::cout << __FUNCTION__ <<": something went wrong #6" << std::endl;
+
+        }
     }
 
     return ret;
