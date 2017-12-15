@@ -137,86 +137,6 @@ std::vector<double> positiveRoots(InputArray L)
 }
 
 
-
-double contractionDomain(InputArray D, double * maxTan /*= 0*/)
-{
-    Vec4d k = D.depth() == CV_32F ? (Vec4d)*D.getMat().ptr<Vec4f>(): *D.getMat().ptr<Vec4d>();
-
-    double upper = cv::fisheye::maxUndistortedZenithAngle(D);
-    double denom[9] = { 1, 0, k[0], 0, k[1], 0, k[2], 0, k[3]};
-    double nom1[8] = { 0, -k[0], 0, -2*k[1], 0, -3*k[2], 0, -4*k[3]};
-    cv::Mat Nom2 = (cv::Mat_<double>(1,16) << 0,
-                    -k[0],
-            2*k[0]*k[0],
-            -k[0]*k[0]-2*k[1],
-            8*k[0]*k[1],
-            -3*k[0]*k[1]-3*k[2],
-            12*k[0]*k[2]+8*k[1]*k[1],
-            -4*k[0]*k[2]-2*k[1]*k[1]-4*k[3],
-            16*k[0]*k[3]+24*k[1]*k[2],
-            -5*k[0]*k[3]-5*k[1]*k[2],
-            32*k[0]*k[3]+9*k[2]*k[2],
-            -6*k[1]*k[3]-3*k[2]*k[2],
-            48*k[2]*k[3],
-            -7*k[2]*k[3],
-            32 * k[3]*k[3],
-            -4*k[3]*k[3]);
-
-    std::vector<double> d2positiveRoots = positiveRoots(Nom2);
-    unsigned n = 0;
-    double derivative = 0, N, Dn;
-    double ret;
-
-    if (!d2positiveRoots.size()) {
-        if (upper > 0) {
-            if (maxTan)
-                *maxTan = upper * poly(denom, 8, upper);
-            return upper;
-        }
-        goto retvalues;
-    }
-
-    ret = d2positiveRoots[n];
-
-    if (upper > 0 && ret > upper ) {
-        ret = upper;
-    }
-
-    if (upper > 0 && d2positiveRoots[d2positiveRoots.size() - 1] < upper)
-        d2positiveRoots.push_back(upper);
-
-
-    while (n < d2positiveRoots.size() ) {
-        N = 2*ret*poly(nom1, 7, ret);
-        Dn = poly(denom,8,ret);
-        Dn *= Dn;
-        derivative = std::fabs(Dn) > std::numeric_limits<double>::epsilon() ? N/Dn : std::numeric_limits<double>::infinity();
-
-        if ( std::fabs(derivative) > MINIMALDERIVATIVE ) {
-            if (ret < upper)
-                ret = n ? d2positiveRoots[n-1] : 0;
-            else
-                ret = 0;
-            goto retvalues;
-        }
-
-        if (upper > 0 && ret >= upper)
-            goto retvalues;
-
-        n++;
-        ret = d2positiveRoots[n];
-        if ( upper > 0 && ret > upper)
-            ret = upper;
-
-    }
-
-retvalues:
-    if (maxTan && *maxTan != std::numeric_limits<double>::infinity())
-        *maxTan = ret * poly(denom, 8, ret);
-
-    return ret;
-}
-
 }}
 
 using namespace cv;
@@ -687,46 +607,6 @@ double cv::fisheye::maxUndistortedZenithAngle(InputArray D, double * maxTan /*= 
     }
 
     return ret;
-}
-
-static inline int bisectionMetod(double k[], unsigned n, double left, double right, double epsilon, double * solution)
-{
-    double polyX = poly(k, n, left);
-    double polyY = poly(k, n, right);
-
-    if (polyX * polyY > 0)
-        return -1;
-
-    if (polyX == 0) {
-        *solution = left;
-        return 0;
-    }
-
-    if (polyY == 0) {
-        *solution = right;
-        return 0;
-    }
-
-
-    while ( right - left > epsilon) {
-        double x = (left + right) / 2;
-        double polyTmp = poly(k, n, x);
-
-        if (polyTmp == 0) {
-            *solution = x;
-            return 0;
-        }
-
-        if (polyX * polyTmp > 0) {
-            left = x;
-            continue;
-        }
-
-        right = x;
-    }
-    *solution = (left + right) / 2;
-
-   return 0;
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
