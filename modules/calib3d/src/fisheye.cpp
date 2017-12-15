@@ -90,29 +90,15 @@ double nthPositiveRoot(InputArray L, unsigned n)
 
     std::vector<double> roots;
 
-    std::cout << __FUNCTION__ <<": roots : " << R << std::endl;
-
     for (int i = 0; i < R.rows; i++) {
         cv::Vec2d r = R.at<cv::Vec2d>(i);
-//        std::cout << r <<std::endl;
         if (std::fabs((long double)r[1]) < std::numeric_limits<double>::epsilon()
-                && (long double)r[0] > 0.0) {
+                && (long double)r[0] > 0.0)
             roots.push_back(r[0]);
-            std::cout << "emplace back: " << r[0] << std::endl;
-        }
-        else
-            std::cout << __FUNCTION__ << "std::numeric_limits<double>::epsilon()="<<
-                      std::numeric_limits<double>::epsilon()<< std::endl;
-
     }
 
     if (roots.size())
         std::sort(roots.begin(),roots.end());
-    std::cout << __FUNCTION__ <<": roots : ";
-    for (unsigned m = 0; m < roots.size(); m++) {
-        std::cout << roots[m] << "; ";
-    }
-    std::cout << std::endl;
 
     if (roots.size() < n)
         return std::numeric_limits<double>::infinity();
@@ -156,7 +142,7 @@ double contractionDomain(InputArray D, double * maxTan /*= 0*/)
 {
     Vec4d k = D.depth() == CV_32F ? (Vec4d)*D.getMat().ptr<Vec4f>(): *D.getMat().ptr<Vec4d>();
 
-    double upper = cv::fisheye::undistortDomain(D);
+    double upper = cv::fisheye::maxUndistortedZenithAngle(D);
     double denom[9] = { 1, 0, k[0], 0, k[1], 0, k[2], 0, k[3]};
     double nom1[8] = { 0, -k[0], 0, -2*k[1], 0, -3*k[2], 0, -4*k[3]};
     cv::Mat Nom2 = (cv::Mat_<double>(1,16) << 0,
@@ -666,10 +652,9 @@ void cv::fisheye::undistortPoints( InputArray distorted, OutputArray undistorted
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// cv::fisheye::undistortDomain
 
-double cv::fisheye::undistortDomain(InputArray D, double * maxTan /*= 0*/)
+double cv::fisheye::maxUndistortedZenithAngle(InputArray D, double * maxTan /*= 0*/)
 {
     Vec4d k = D.depth() == CV_32F ? (Vec4d)*D.getMat().ptr<Vec4f>(): *D.getMat().ptr<Vec4d>();
-    std::cout << __FUNCTION__ <<": K = " << k << std::endl;
     double ret = -1.0;
     if ( k[3] >= 0 && k[2] >= 0 && k[1] >= 0 && k[0] >= 0 ) {
         ret = CV_PI;//std::numeric_limits<double>::infinity()/2 + 1;
@@ -677,62 +662,32 @@ double cv::fisheye::undistortDomain(InputArray D, double * maxTan /*= 0*/)
             double p[10] = { 0.0, 1.0, 0.0, k[0], 0.0, k[1], 0.0, k[2], 0.0, k[3] };
             *maxTan = poly(p, 9, ret );
         }
-        std::cout << __FUNCTION__ <<": returns INFINITY #1" << std::endl;
-        return ret; // undistortPointsEx domain [ 0; +\infty )
+        return ret;
     }
 
     cv::Mat L = (cv::Mat_<double>(1,9) << 1.0, 0.0, 3*k[0], 0.0, 5*k[1], 0.0, 7*k[2], 0.0, 9*k[3]);
     ret = nthPositiveRoot(L,1);
-    std::cout << __FUNCTION__ << " : 1st positive root is " << ret << std::endl;
 
     if (ret > 4*CV_PI) {
-        std::cout << __FUNCTION__ <<": returns INFINITY #2" << std::endl;
         ret = CV_PI;
     }
 
-    std::cout << __FUNCTION__ << " : 1st positive root is " << ret << std::endl;
-
     if (ret < 0) {
-        std::cout << __FUNCTION__ <<": something went wrong #3" << std::endl;
         return ret;
     }
 
     if (maxTan) {
-/*        if (ret > std::numeric_limits<double>::infinity()/2) {
-            *maxTan = std::numeric_limits<double>::infinity()/2 + 1;
-            std::cout << __FUNCTION__ <<": returns INFINITY #4" << std::endl;
-
-        }
-        else*/ if (ret > 0) {
+        if (ret > 0) {
             double p[10] = { 0.0, 1.0, 0.0, k[0], 0.0, k[1], 0.0, k[2], 0.0, k[3] };
             *maxTan = poly(p, 9, ret );
-            std::cout << __FUNCTION__ <<": normal data #5" << std::endl;
-
         }
         else {
             *maxTan = -1.0;
-            std::cout << __FUNCTION__ <<": something went wrong #6" << std::endl;
-
         }
     }
 
     return ret;
 }
-
-
-
-struct Tan {
-    double val;
-    unsigned no;
-
-    Tan(double _tan, int _no)
-        : val(_tan)
-        , no(_no)
-    {}
-
-    bool operator< (const Tan& rhs) const { return val < rhs.val; }
-};
-
 
 static inline int bisectionMetod(double k[], unsigned n, double left, double right, double epsilon, double * solution)
 {
@@ -774,13 +729,24 @@ static inline int bisectionMetod(double k[], unsigned n, double left, double rig
    return 0;
 }
 
-double cv::fisheye::undistortDomain( InputArray distorted, InputArray K, InputArray D, double * maxTan /*= 0*/, OutputArray mask /*= cv::noArray()*/)
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// cv::fisheye::undistortSpheric
+
+static int bisectionMetod(double k[], double theta_d, double epsilon, double * theta_un, double upperLimit = CV_PI/2);
+
+void cv::fisheye::undistortSpheric2( InputArray distorted, OutputArray undistorted, InputArray K, InputArray D)
 {
-    double dom = undistortDomain(D, maxTan);
+    CV_INSTRUMENT_REGION()
 
-    std::vector<Tan> tan;
+    CV_Assert(distorted.type() == CV_32FC2 || distorted.type() == CV_64FC2);
+    CV_Assert(D.total() == 4 && K.size() == Size(3, 3) && (K.depth() == CV_32F || K.depth() == CV_64F));
+
+    undistorted.create(distorted.size(), distorted.type());
+
+    double maxTan;
+    maxUndistortedZenithAngle(D, &maxTan);
+
     cv::Vec2d f, c;
-
     if (K.depth() == CV_32F)
     {
         Matx33f camMat = K.getMat();
@@ -795,80 +761,47 @@ double cv::fisheye::undistortDomain( InputArray distorted, InputArray K, InputAr
     }
 
     Vec4d k = D.depth() == CV_32F ? (Vec4d)*D.getMat().ptr<Vec4f>(): *D.getMat().ptr<Vec4d>();
+    cv::Mat L = (cv::Mat_<double>(1,10) << 0.0, 1.0, 0.0, k[0], 0.0, k[1], 0.0, k[2], 0.0, k[3]);
+
+    // start undistorting
     const cv::Vec2f* srcf = distorted.getMat().ptr<cv::Vec2f>();
     const cv::Vec2d* srcd = distorted.getMat().ptr<cv::Vec2d>();
-
-    double tanMax = 0;
+    cv::Vec2f* dstf = undistorted.getMat().ptr<cv::Vec2f>();
+    cv::Vec2d* dstd = undistorted.getMat().ptr<cv::Vec2d>();
 
     size_t n = distorted.total();
     int sdepth = distorted.depth();
-
 
     for(size_t i = 0; i < n; i++ )
     {
         Vec2d pi = sdepth == CV_32F ? (Vec2d)srcf[i] : srcd[i];  // image point
         Vec2d pw((pi[0] - c[0])/f[0], (pi[1] - c[1])/f[1]);      // world point
-        double theta_d = sqrt(pw[0]*pw[0] + pw[1]*pw[1]);
 
-        Tan node(theta_d,i);
-        tan.push_back(node);
+        double r2 = pw[0]*pw[0] + pw[1]*pw[1];
 
-        if (theta_d > tanMax)
-            tanMax = theta_d;
-    }
+        double theta_d = sqrt(r2);
+        double theta = theta_d;
+        double phi = 0.0;
+        if ( r2 > std::numeric_limits<double>::epsilon() )
+            phi = pw[1] >= 0 ? acos(pw[0]/theta_d) :  - acos(pw[0]/theta_d);
+        else if (pw[1] != 0.0)
+            phi = pw[0]/pw[1];
 
-    if (dom > 0) {
-        volatile int ret = -1;
-        int N = tan.size() - 1;
-        std::sort(tan.begin(),tan.end());
-        volatile double tmp = 0;
-        do {
-            double p[10] = { -tan[N].val, 1, 0, k[0], 0, k[1], 0, k[2], 0, k[3] };
-            ret = bisectionMetod(p, 9,0.0, dom, std::numeric_limits<double>::epsilon(), (double*)&tmp);
-            if (!ret )
-                dom = tmp + std::numeric_limits<double>::epsilon();
-            N--;
-        } while ( ret < 0  && N >= 0);
+        if (phi > CV_PI) phi = CV_PI;
+        if (phi < -CV_PI) phi = - CV_PI;
 
-        if (!mask.empty() && N > 0) {
-            cv::Mat inliers(1,tan.size(),CV_8U);
-            for (unsigned m = 0; m < tan.size(); m++) {
-                inliers.at<uchar>(tan[m].no) = m <= (unsigned)N ? uchar(1) : 0;
-            }
-            inliers.copyTo(mask);
-        }
+        theta_d = std::min(theta_d, maxTan - std::numeric_limits<double>::epsilon());
+        L.at<double>(0) = -theta_d;
+        theta = nthPositiveRoot(L,1);
 
-        if (ret < 0)
-            return std::numeric_limits<double>::epsilon() / 2;
+        Vec2d pu(theta,phi); //undistorted point
 
-        return dom;
-    }
-    else {
-        double p[10] = { -tanMax, 1, 0, k[0], 0, k[1], 0, k[2], 0, k[3] };
-        double right = tanMax/2;
-        int ret;
-        double tmp;
-        do {
-            right *= 2;
-            ret = bisectionMetod(p, 9, 0.0, right, std::numeric_limits<double>::epsilon(), &tmp);
-        } while ( ret < 0 );
-
-        if (!mask.empty()) {
-            cv::Mat inliers(1,tan.size(),CV_8U);
-            for (unsigned m = 0; m < tan.size(); m++) {
-                inliers.at<uchar>(tan[m].no) = uchar(1);
-            }
-            inliers.copyTo(mask);
-        }
-
-        return right;
+        if( sdepth == CV_32F )
+            dstf[i] = pu;
+        else
+            dstd[i] = pu;
     }
 }
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////
-/// cv::fisheye::undistortSpheric
-
-static int bisectionMetod(double k[], double theta_d, double epsilon, double * theta_un, double upperLimit = CV_PI/2);
 
 void cv::fisheye::undistortSpheric( InputArray distorted, OutputArray undistorted, InputArray K, InputArray D, double upperLimit /*= -1.0*/)
 {
@@ -882,7 +815,7 @@ void cv::fisheye::undistortSpheric( InputArray distorted, OutputArray undistorte
     double domain = upperLimit;
     double maxTan;
     if (upperLimit < 0)
-        domain = undistortDomain(D, &maxTan);
+        domain = maxUndistortedZenithAngle(D, &maxTan);
 
     cv::Vec2d f, c;
     if (K.depth() == CV_32F)
@@ -927,7 +860,7 @@ void cv::fisheye::undistortSpheric( InputArray distorted, OutputArray undistorte
         if (phi > CV_PI) phi = CV_PI;
         if (phi < -CV_PI) phi = - CV_PI;
 
-        theta_d = std::max(theta_d, maxTan - std::numeric_limits<double>::epsilon());
+        theta_d = std::min(theta_d, maxTan - std::numeric_limits<double>::epsilon());
 
         if (theta_d > 1e-8)
         {
@@ -950,6 +883,7 @@ void cv::fisheye::undistortSpheric( InputArray distorted, OutputArray undistorte
     }
 }
 
+
 static inline int bisectionMetod(double k[], double theta_d, double epsilon, double * theta_un, double upperLimit /*= CV_PI/2*/)
 {
     if (theta_d < 0)
@@ -969,7 +903,7 @@ static inline int bisectionMetod(double k[], double theta_d, double epsilon, dou
     if (poly < 0)
         return -1;
     if (poly == 0) {
-        *theta_un = upperLimit;
+        *theta_un = theta_d;//upperLimit;
         return 0;
     }
 
