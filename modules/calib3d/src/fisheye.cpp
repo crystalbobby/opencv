@@ -45,8 +45,6 @@
 #include <limits>
 #include <iostream>
 
-#define MINIMALDERIVATIVE (0.25)
-
 namespace cv { namespace
 {
     struct JacobianRow
@@ -104,36 +102,6 @@ double nthPositiveRoot(InputArray L, unsigned n)
         return std::numeric_limits<double>::infinity();
 
     return roots[n-1];
-}
-
-std::vector<double> positiveRoots(InputArray L)
-{
-    std::vector<double> roots;
-    int n = L.cols();
-    if ( n < 1 )
-        return roots;
-
-    cv::Mat R;
-
-    try {
-        cv::solvePoly(L,R);
-    }
-    catch (...) {
-        return roots;
-    }
-
-
-    for (int i = 0; i < R.cols; i++) {
-        cv::Vec2d r = R.at<cv::Vec2d>(i);
-        if (std::fabs((long double)r[1]) < std::numeric_limits<double>::epsilon()
-                && (long double)r[0] > 0.0)
-            roots.push_back(r[0]);
-    }
-
-    if (roots.size())
-        std::sort(roots.begin(),roots.end());
-
-    return roots;
 }
 
 
