@@ -44,8 +44,16 @@
 #include "fisheye.hpp"
 #include <limits>
 #include <iostream>
+namespace cv { namespace fisheye {
 
-#define MINIMALDERIVATIVE (0.25)
+
+CV_EXPORTS_W double maxUndistortedZenithAngle(InputArray D, double *maxTan = 0);
+CV_EXPORTS_W void undistortSpheric2( InputArray distorted, OutputArray undistorted, InputArray K, InputArray D);
+CV_EXPORTS_W void undistortSpheric( InputArray distorted, OutputArray undistorted, InputArray K,
+                                                 InputArray D, double upperLimit = -1.0, double max = -1.0);
+
+
+}}
 
 namespace cv { namespace
 {
@@ -106,40 +114,11 @@ double nthPositiveRoot(InputArray L, unsigned n)
     return roots[n-1];
 }
 
-std::vector<double> positiveRoots(InputArray L)
-{
-    std::vector<double> roots;
-    int n = L.cols();
-    if ( n < 1 )
-        return roots;
-
-    cv::Mat R;
-
-    try {
-        cv::solvePoly(L,R);
-    }
-    catch (...) {
-        return roots;
-    }
-
-
-    for (int i = 0; i < R.cols; i++) {
-        cv::Vec2d r = R.at<cv::Vec2d>(i);
-        if (std::fabs((long double)r[1]) < std::numeric_limits<double>::epsilon()
-                && (long double)r[0] > 0.0)
-            roots.push_back(r[0]);
-    }
-
-    if (roots.size())
-        std::sort(roots.begin(),roots.end());
-
-    return roots;
-}
-
 
 }}
 
 using namespace cv;
+using namespace cv::fisheye;
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// cv::fisheye::projectPoints
 
@@ -572,7 +551,7 @@ void cv::fisheye::undistortPoints( InputArray distorted, OutputArray undistorted
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// cv::fisheye::undistortDomain
 
-double cv::fisheye::maxUndistortedZenithAngle(InputArray D, double * maxTan /*= 0*/)
+CV_EXPORTS_W double cv::fisheye::maxUndistortedZenithAngle(InputArray D, double *maxTan)//maxUndistortedZenithAngle(InputArray D, double * maxTan /*= 0*/)
 {
     Vec4d k = D.depth() == CV_32F ? (Vec4d)*D.getMat().ptr<Vec4f>(): *D.getMat().ptr<Vec4d>();
     double ret = -1.0;
@@ -683,7 +662,7 @@ void cv::fisheye::undistortSpheric2( InputArray distorted, OutputArray undistort
     }
 }
 
-void cv::fisheye::undistortSpheric( InputArray distorted, OutputArray undistorted, InputArray K, InputArray D, double upperLimit /*= -1.0*/)
+void cv::fisheye::undistortSpheric( InputArray distorted, OutputArray undistorted, InputArray K, InputArray D, double upperLimit /*= -1.0*/, double maxT /*= -1*/)
 {
     CV_INSTRUMENT_REGION()
 
@@ -693,8 +672,8 @@ void cv::fisheye::undistortSpheric( InputArray distorted, OutputArray undistorte
     undistorted.create(distorted.size(), distorted.type());
 
     double domain = upperLimit;
-    double maxTan;
-    if (upperLimit < 0)
+    double maxTan = maxT;
+    if (upperLimit < 0 || maxT < 0)
         domain = maxUndistortedZenithAngle(D, &maxTan);
 
     cv::Vec2d f, c;
@@ -745,13 +724,26 @@ void cv::fisheye::undistortSpheric( InputArray distorted, OutputArray undistorte
         if (theta_d > 1e-8)
         {
             // compensate distortion iteratively
-            double p[5] = { k[3], k[2], k[1], k[0], 1 };
-            // Solve
-            double epsilon = distorted.type() == CV_32FC2
-                    ? std::numeric_limits<float>::epsilon()
-                    : std::numeric_limits<double>::epsilon();
+            for(int j = 0; j < 20; j++ )
+            {
+                double theta2 = theta*theta, theta4 = theta2*theta2, theta6 = theta4*theta2, theta8 = theta6*theta2;
+                theta = theta_d / (1 + k[0] * theta2 + k[1] * theta4 + k[2] * theta6 + k[3] * theta8);
+            }
 
-            bisectionMetod(p,theta_d, epsilon, &theta, domain);
+            double theta2 = theta*theta, theta3 = theta2*theta, theta4 = theta2*theta2, theta5 = theta4*theta,
+                    theta6 = theta3*theta3, theta7 = theta6*theta, theta8 = theta4*theta4, theta9 = theta8*theta;
+
+            double theta_ud = theta + k[0]*theta3 + k[1]*theta5 + k[2]*theta7 + k[3]*theta9;
+
+            if (std::fabs(theta_ud - theta_d) > 1e-10) {
+                double p[5] = { k[3], k[2], k[1], k[0], 1 };
+                // Solve
+                double epsilon = distorted.type() == CV_32FC2
+                        ? std::numeric_limits<float>::epsilon()
+                        : std::numeric_limits<double>::epsilon();
+
+                bisectionMetod(p,theta_d, epsilon, &theta, domain);
+            }
         }
 
         Vec2d pu(theta,phi); //undistorted point

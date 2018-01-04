@@ -2097,7 +2097,7 @@ namespace fisheye
     @param undistorted Output array of image points in spherical coordinates (theta,phi), where theta is zenith angle, phi is
     azimutal angle
      */
-    CV_EXPORTS_W void undistortSpheric( InputArray distorted, OutputArray undistorted, InputArray K, InputArray D, double domain = -1);
+    CV_EXPORTS_W void undistortSpheric( InputArray distorted, OutputArray undistorted, InputArray K, InputArray D, double domain = -1, double maxTan = -1);
     CV_EXPORTS_W void undistortSpheric2( InputArray distorted, OutputArray undistorted, InputArray K, InputArray D);
 
 
