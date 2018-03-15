@@ -55,6 +55,10 @@ namespace cv { namespace
     };
 
     void subMatrix(const Mat& src, Mat& dst, const std::vector<uchar>& cols, const std::vector<uchar>& rows);
+
+    double poly(double k[], unsigned n, double x);
+    double nthPositiveRoot(InputArray L, unsigned n);
+    int bisectionMetod(double k[], double theta_d, double epsilon, double * theta_un, double upperLimit);
 }}
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -332,6 +336,68 @@ void cv::fisheye::distortPoints(InputArray undistorted, OutputArray distorted, I
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// cv::fisheye::distortSpherePoints
+
+void cv::fisheye::distortSpheric(InputArray undistorted, OutputArray distorted, InputArray K, InputArray D, double alpha)
+{
+    CV_INSTRUMENT_REGION()
+
+    // will support only 2-channel data now for points
+    CV_Assert(undistorted.type() == CV_32FC2 || undistorted.type() == CV_64FC2);
+    distorted.create(undistorted.size(), undistorted.type());
+    size_t n = undistorted.total();
+
+    CV_Assert(K.size() == Size(3,3) && (K.type() == CV_32F || K.type() == CV_64F) && D.total() == 4);
+
+    cv::Vec2d f, c;
+    if (K.depth() == CV_32F)
+    {
+        Matx33f camMat = K.getMat();
+        f = Vec2f(camMat(0, 0), camMat(1, 1));
+        c = Vec2f(camMat(0, 2), camMat(1, 2));
+    }
+    else
+    {
+        Matx33d camMat = K.getMat();
+        f = Vec2d(camMat(0, 0), camMat(1, 1));
+        c = Vec2d(camMat(0 ,2), camMat(1, 2));
+    }
+
+    Vec4d k = D.depth() == CV_32F ? (Vec4d)*D.getMat().ptr<Vec4f>(): *D.getMat().ptr<Vec4d>();
+
+    const Vec2f* Xf = undistorted.getMat().ptr<Vec2f>();
+    const Vec2d* Xd = undistorted.getMat().ptr<Vec2d>();
+    Vec2f *xpf = distorted.getMat().ptr<Vec2f>();
+    Vec2d *xpd = distorted.getMat().ptr<Vec2d>();
+
+    for(size_t i = 0; i < n; ++i)
+    {
+        Vec2d x = undistorted.depth() == CV_32F ? (Vec2d)Xf[i] : Xd[i];
+
+        // Angle of the incoming ray:
+        double theta = x[0];
+
+        double theta2 = theta*theta, theta3 = theta2*theta, theta4 = theta2*theta2, theta5 = theta4*theta,
+                theta6 = theta3*theta3, theta7 = theta6*theta, theta8 = theta4*theta4, theta9 = theta8*theta;
+
+        double theta_d = theta + k[0]*theta3 + k[1]*theta5 + k[2]*theta7 + k[3]*theta9;
+
+        double r = theta_d;
+        double u = r * cos(x[1]);
+        double v = r * sin(x[1]);
+
+        Vec2d xd1(u, v);
+        Vec2d xd3(xd1[0] + alpha*xd1[1], xd1[1]);
+        Vec2d final_point(xd3[0] * f[0] + c[0], xd3[1] * f[1] + c[1]);
+
+        if (undistorted.depth() == CV_32F)
+            xpf[i] = final_point;
+        else
+            xpd[i] = final_point;
+    }
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
 /// cv::fisheye::undistortPoints
 
 void cv::fisheye::undistortPoints( InputArray distorted, OutputArray undistorted, InputArray K, InputArray D, InputArray R, InputArray P)
@@ -428,6 +494,219 @@ void cv::fisheye::undistortPoints( InputArray distorted, OutputArray undistorted
             dstf[i] = fi;
         else
             dstd[i] = fi;
+    }
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// cv::fisheye::maxUndistortedZenithAngle
+
+double cv::fisheye::maxUndistortedZenithAngle(InputArray D, double * maxTan)
+{
+    Vec4d k = D.depth() == CV_32F ? (Vec4d)*D.getMat().ptr<Vec4f>(): *D.getMat().ptr<Vec4d>();
+    double ret = -1.0;
+    if ( k[3] >= 0 && k[2] >= 0 && k[1] >= 0 && k[0] >= 0 )
+    {
+        ret = CV_PI;//std::numeric_limits<double>::infinity()/2 + 1;
+        if (maxTan)
+        {
+            double p[10] = { 0.0, 1.0, 0.0, k[0], 0.0, k[1], 0.0, k[2], 0.0, k[3] };
+            *maxTan = poly(p, 9, ret );
+        }
+
+        return ret;
+    }
+
+    cv::Mat L = (cv::Mat_<double>(1,9) << 1.0, 0.0, 3*k[0], 0.0, 5*k[1], 0.0, 7*k[2], 0.0, 9*k[3]);
+    ret = nthPositiveRoot(L,1);
+
+    if (ret > 4*CV_PI)
+    {
+        ret = CV_PI;
+    }
+
+    if (ret < 0)
+    {
+        return ret;
+    }
+
+    if (maxTan)
+    {
+        if (ret > 0)
+        {
+            double p[10] = { 0.0, 1.0, 0.0, k[0], 0.0, k[1], 0.0, k[2], 0.0, k[3] };
+            *maxTan = poly(p, 9, ret );
+        }
+        else
+        {
+            *maxTan = -1.0;
+        }
+    }
+
+    return ret;
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////
+/// cv::fisheye::undistortSpheric
+
+void cv::fisheye::undistortSpheric2( InputArray distorted, OutputArray undistorted, InputArray K, InputArray D)
+{
+    CV_INSTRUMENT_REGION()
+
+    CV_Assert(distorted.type() == CV_32FC2 || distorted.type() == CV_64FC2);
+    CV_Assert(D.total() == 4 && K.size() == Size(3, 3) && (K.depth() == CV_32F || K.depth() == CV_64F));
+
+    undistorted.create(distorted.size(), distorted.type());
+
+    double maxTan;
+    maxUndistortedZenithAngle(D, &maxTan);
+
+    cv::Vec2d f, c;
+    if (K.depth() == CV_32F)
+    {
+        Matx33f camMat = K.getMat();
+        f = Vec2f(camMat(0, 0), camMat(1, 1));
+        c = Vec2f(camMat(0, 2), camMat(1, 2));
+    }
+    else
+    {
+        Matx33d camMat = K.getMat();
+        f = Vec2d(camMat(0, 0), camMat(1, 1));
+        c = Vec2d(camMat(0, 2), camMat(1, 2));
+    }
+
+    Vec4d k = D.depth() == CV_32F ? (Vec4d)*D.getMat().ptr<Vec4f>(): *D.getMat().ptr<Vec4d>();
+    cv::Mat L = (cv::Mat_<double>(1,10) << 0.0, 1.0, 0.0, k[0], 0.0, k[1], 0.0, k[2], 0.0, k[3]);
+
+    // start undistorting
+    const cv::Vec2f* srcf = distorted.getMat().ptr<cv::Vec2f>();
+    const cv::Vec2d* srcd = distorted.getMat().ptr<cv::Vec2d>();
+    cv::Vec2f* dstf = undistorted.getMat().ptr<cv::Vec2f>();
+    cv::Vec2d* dstd = undistorted.getMat().ptr<cv::Vec2d>();
+
+    size_t n = distorted.total();
+    int sdepth = distorted.depth();
+
+    for(size_t i = 0; i < n; i++ )
+    {
+        Vec2d pi = sdepth == CV_32F ? (Vec2d)srcf[i] : srcd[i];  // image point
+        Vec2d pw((pi[0] - c[0])/f[0], (pi[1] - c[1])/f[1]);      // world point
+
+        double r2 = pw[0]*pw[0] + pw[1]*pw[1];
+
+        double theta_d = sqrt(r2);
+        double theta = theta_d;
+        double phi = 0.0;
+        if ( r2 > std::numeric_limits<double>::epsilon() )
+            phi = pw[1] >= 0 ? acos(pw[0]/theta_d) :  - acos(pw[0]/theta_d);
+        else if (pw[1] != 0.0)
+            phi = pw[0]/pw[1];
+
+        if (phi > CV_PI) phi = CV_PI;
+        if (phi < -CV_PI) phi = - CV_PI;
+
+        theta_d = std::min(theta_d, maxTan - std::numeric_limits<double>::epsilon());
+        L.at<double>(0) = -theta_d;
+        theta = nthPositiveRoot(L,1);
+
+        Vec2d pu(theta,phi); //undistorted point
+
+        if( sdepth == CV_32F )
+            dstf[i] = pu;
+        else
+            dstd[i] = pu;
+    }
+}
+
+void cv::fisheye::undistortSpheric( InputArray distorted, OutputArray undistorted, InputArray K, InputArray D, double upperLimit, double maxT)
+{
+    CV_INSTRUMENT_REGION()
+
+    CV_Assert(distorted.type() == CV_32FC2 || distorted.type() == CV_64FC2);
+    CV_Assert(D.total() == 4 && K.size() == Size(3, 3) && (K.depth() == CV_32F || K.depth() == CV_64F));
+
+    undistorted.create(distorted.size(), distorted.type());
+
+    double domain = upperLimit;
+    double maxTan = maxT;
+    if (upperLimit < 0 || maxT < 0)
+        domain = maxUndistortedZenithAngle(D, &maxTan);
+
+    cv::Vec2d f, c;
+    if (K.depth() == CV_32F)
+    {
+        Matx33f camMat = K.getMat();
+        f = Vec2f(camMat(0, 0), camMat(1, 1));
+        c = Vec2f(camMat(0, 2), camMat(1, 2));
+    }
+    else
+    {
+        Matx33d camMat = K.getMat();
+        f = Vec2d(camMat(0, 0), camMat(1, 1));
+        c = Vec2d(camMat(0, 2), camMat(1, 2));
+    }
+
+    Vec4d k = D.depth() == CV_32F ? (Vec4d)*D.getMat().ptr<Vec4f>(): *D.getMat().ptr<Vec4d>();
+
+    // start undistorting
+    const cv::Vec2f* srcf = distorted.getMat().ptr<cv::Vec2f>();
+    const cv::Vec2d* srcd = distorted.getMat().ptr<cv::Vec2d>();
+    cv::Vec2f* dstf = undistorted.getMat().ptr<cv::Vec2f>();
+    cv::Vec2d* dstd = undistorted.getMat().ptr<cv::Vec2d>();
+
+    size_t n = distorted.total();
+    int sdepth = distorted.depth();
+
+    for(size_t i = 0; i < n; i++ )
+    {
+        Vec2d pi = sdepth == CV_32F ? (Vec2d)srcf[i] : srcd[i];  // image point
+        Vec2d pw((pi[0] - c[0])/f[0], (pi[1] - c[1])/f[1]);      // world point
+
+        double r2 = pw[0]*pw[0] + pw[1]*pw[1];
+
+        double theta_d = sqrt(r2);
+        double theta = theta_d;
+        double phi = 0.0;
+        if ( r2 > std::numeric_limits<double>::epsilon() )
+            phi = pw[1] >= 0 ? acos(pw[0]/theta_d) :  - acos(pw[0]/theta_d);
+        else if (pw[1] != 0.0)
+            phi = pw[0]/pw[1];
+
+        if (phi > CV_PI) phi = CV_PI;
+        if (phi < -CV_PI) phi = - CV_PI;
+
+        theta_d = std::min(theta_d, maxTan - std::numeric_limits<double>::epsilon());
+
+        if (theta_d > 1e-8)
+        {
+            // compensate distortion iteratively
+            for(int j = 0; j < 20; j++ )
+            {
+                double theta2 = theta*theta, theta4 = theta2*theta2, theta6 = theta4*theta2, theta8 = theta6*theta2;
+                theta = theta_d / (1 + k[0] * theta2 + k[1] * theta4 + k[2] * theta6 + k[3] * theta8);
+            }
+
+            double theta2 = theta*theta, theta3 = theta2*theta, theta4 = theta2*theta2, theta5 = theta4*theta,
+                    theta6 = theta3*theta3, theta7 = theta6*theta, theta8 = theta4*theta4, theta9 = theta8*theta;
+
+            double theta_ud = theta + k[0]*theta3 + k[1]*theta5 + k[2]*theta7 + k[3]*theta9;
+
+            if (std::fabs(theta_ud - theta_d) > 1e-10) {
+                double p[5] = { k[3], k[2], k[1], k[0], 1 };
+                // Solve
+                double epsilon = distorted.type() == CV_32FC2
+                        ? std::numeric_limits<float>::epsilon()
+                        : std::numeric_limits<double>::epsilon();
+
+                bisectionMetod(p,theta_d, epsilon, &theta, domain);
+            }
+        }
+
+        Vec2d pu(theta,phi); //undistorted point
+
+        if( sdepth == CV_32F )
+            dstf[i] = pu;
+        else
+            dstd[i] = pu;
     }
 }
 
@@ -1117,6 +1396,98 @@ void subMatrix(const Mat& src, Mat& dst, const std::vector<uchar>& cols, const s
             tmp.row(i).copyTo(dst.row(j++));
         }
     }
+}
+
+double poly(double k[], unsigned n, double x)
+{
+
+    double ret = k[n];
+    for (unsigned i = 1; i <= n; i++) {
+        ret *= x;
+        ret += k[n - i];
+    }
+
+    return ret;
+}
+
+double nthPositiveRoot(InputArray L, unsigned n)
+{
+    if ( n < 1 )
+        return -1.0;
+
+    cv::Mat R;
+
+    try
+    {
+        cv::solvePoly(L,R);
+    }
+    catch (...)
+    {
+        return -2.0;
+    }
+
+    std::vector<double> roots;
+
+    for (int i = 0; i < R.rows; i++)
+    {
+        cv::Vec2d r = R.at<cv::Vec2d>(i);
+        if (std::fabs((long double)r[1]) < std::numeric_limits<double>::epsilon()
+                && (long double)r[0] > 0.0)
+            roots.push_back(r[0]);
+    }
+
+    if (!roots.empty())
+        std::sort(roots.begin(), roots.end());
+
+    if (roots.size() < n)
+        return std::numeric_limits<double>::infinity();
+
+    return roots[n - 1];
+}
+
+int bisectionMetod(double k[], double theta_d, double epsilon, double * theta_un, double upperLimit)
+{
+    if (theta_d < 0)
+        return -1;
+
+    if (theta_d < epsilon) {
+        *theta_un = theta_d;
+        return 0;
+    }
+
+    double left = 0, right = upperLimit;
+    double x = right, x2 = x*x;
+    double poly = k[0] * x2;
+    poly += k[1]; poly *= x2; poly += k[2]; poly *= x2; poly += k[3];
+    poly *= x2; poly += 1; poly *= x; poly -= theta_d;
+
+    if (poly < 0)
+        return -1;
+    if (poly == 0) {
+        *theta_un = theta_d;//upperLimit;
+        return 0;
+    }
+
+    while (right - left > epsilon) {
+        x = (left + right) / 2;
+        x2 = x*x;
+        poly = k[0] * x2;
+        poly += k[1]; poly *= x2; poly += k[2]; poly *= x2; poly += k[3];
+        poly *= x2; poly += 1; poly *= x; poly -= theta_d;
+
+        if (poly == 0) {
+            *theta_un = x;
+            return 0;
+        }
+
+        if (poly > 0)
+            right = x;
+        else
+            left = x;
+    }
+    *theta_un = (left + right) / 2;
+
+   return 0;
 }
 
 }}
